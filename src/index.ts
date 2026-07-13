@@ -13,6 +13,7 @@ import {logger} from "./Logger";
 import {runLoginCommand} from "./login";
 import {runCodexCli} from "./CodexCli";
 import {LEGACY_SET_SESSION_MODEL_METHOD} from "./AcpExtensions";
+import {runWithTrace, traceRegistry, type TraceRequestId} from "./TraceContext";
 
 const emptyExtensionParamsParser = z.preprocess(
     (params) => params ?? {},
@@ -23,6 +24,16 @@ const legacySetSessionModelParamsParser = z.object({
     sessionId: z.string(),
     modelId: z.string(),
 }).passthrough();
+
+async function traceAcpRequest<T>(method: string, requestId: TraceRequestId, callback: () => T | PromiseLike<T>): Promise<T> {
+    const context = traceRegistry.getOrCreateAcpRequest(method, requestId);
+    return await runWithTrace(context, callback);
+}
+
+function traceAcpNotification<T>(params: unknown, callback: () => T): T {
+    const context = traceRegistry.contextForMessage(params);
+    return context ? runWithTrace(context, callback) : callback();
+}
 
 if (process.argv.includes("--version")) {
     console.log(`${packageJson.name} ${packageJson.version}`);
@@ -59,6 +70,7 @@ function startAcpServer() {
     const defaultAuthRequest = parsedAuthRequest && isCodexAuthRequest(parsedAuthRequest) ? parsedAuthRequest : undefined;
 
     logger.log("Startup", {
+        connectionId: traceRegistry.connectionId,
         name: packageJson.name,
         version: packageJson.version,
         codexPath: codexPath,
@@ -113,21 +125,21 @@ function startAcpServer() {
                 }
             });
         })
-        .onRequest(acp.methods.agent.initialize, (ctx) => getAgent().initialize(ctx.params))
-        .onRequest(acp.methods.agent.session.new, (ctx) => getAgent().newSession(ctx.params))
-        .onRequest(acp.methods.agent.session.load, (ctx) => getAgent().loadSession(ctx.params))
-        .onRequest(acp.methods.agent.session.list, (ctx) => getAgent().listSessions(ctx.params))
-        .onRequest(acp.methods.agent.session.delete, (ctx) => getAgent().deleteSession(ctx.params))
-        .onRequest(acp.methods.agent.session.resume, (ctx) => getAgent().resumeSession(ctx.params))
-        .onRequest(acp.methods.agent.session.close, (ctx) => getAgent().closeSession(ctx.params))
-        .onRequest(acp.methods.agent.session.setMode, (ctx) => getAgent().setSessionMode(ctx.params))
-        .onRequest(acp.methods.agent.session.setConfigOption, (ctx) => getAgent().setSessionConfigOption(ctx.params))
-        .onRequest(acp.methods.agent.authenticate, (ctx) => getAgent().authenticate(ctx.params))
-        .onRequest(acp.methods.agent.logout, (ctx) => getAgent().logout(ctx.params))
-        .onRequest(acp.methods.agent.session.prompt, (ctx) => getAgent().prompt(ctx.params, ctx.signal))
-        .onNotification(acp.methods.agent.session.cancel, (ctx) => getAgent().cancel(ctx.params))
-        .onRequest("authentication/status", emptyExtensionParamsParser, (ctx) => getAgent().extMethod("authentication/status", ctx.params))
-        .onRequest("authentication/logout", emptyExtensionParamsParser, (ctx) => getAgent().extMethod("authentication/logout", ctx.params))
-        .onRequest(LEGACY_SET_SESSION_MODEL_METHOD, legacySetSessionModelParamsParser, (ctx) => getAgent().extMethod(LEGACY_SET_SESSION_MODEL_METHOD, ctx.params))
+        .onRequest(acp.methods.agent.initialize, (ctx) => traceAcpRequest(acp.methods.agent.initialize, ctx.requestId, () => getAgent().initialize(ctx.params)))
+        .onRequest(acp.methods.agent.session.new, (ctx) => traceAcpRequest(acp.methods.agent.session.new, ctx.requestId, () => getAgent().newSession(ctx.params)))
+        .onRequest(acp.methods.agent.session.load, (ctx) => traceAcpRequest(acp.methods.agent.session.load, ctx.requestId, () => getAgent().loadSession(ctx.params)))
+        .onRequest(acp.methods.agent.session.list, (ctx) => traceAcpRequest(acp.methods.agent.session.list, ctx.requestId, () => getAgent().listSessions(ctx.params)))
+        .onRequest(acp.methods.agent.session.delete, (ctx) => traceAcpRequest(acp.methods.agent.session.delete, ctx.requestId, () => getAgent().deleteSession(ctx.params)))
+        .onRequest(acp.methods.agent.session.resume, (ctx) => traceAcpRequest(acp.methods.agent.session.resume, ctx.requestId, () => getAgent().resumeSession(ctx.params)))
+        .onRequest(acp.methods.agent.session.close, (ctx) => traceAcpRequest(acp.methods.agent.session.close, ctx.requestId, () => getAgent().closeSession(ctx.params)))
+        .onRequest(acp.methods.agent.session.setMode, (ctx) => traceAcpRequest(acp.methods.agent.session.setMode, ctx.requestId, () => getAgent().setSessionMode(ctx.params)))
+        .onRequest(acp.methods.agent.session.setConfigOption, (ctx) => traceAcpRequest(acp.methods.agent.session.setConfigOption, ctx.requestId, () => getAgent().setSessionConfigOption(ctx.params)))
+        .onRequest(acp.methods.agent.authenticate, (ctx) => traceAcpRequest(acp.methods.agent.authenticate, ctx.requestId, () => getAgent().authenticate(ctx.params)))
+        .onRequest(acp.methods.agent.logout, (ctx) => traceAcpRequest(acp.methods.agent.logout, ctx.requestId, () => getAgent().logout(ctx.params)))
+        .onRequest(acp.methods.agent.session.prompt, (ctx) => traceAcpRequest(acp.methods.agent.session.prompt, ctx.requestId, () => getAgent().prompt(ctx.params, ctx.signal)))
+        .onNotification(acp.methods.agent.session.cancel, (ctx) => traceAcpNotification(ctx.params, () => getAgent().cancel(ctx.params)))
+        .onRequest("authentication/status", emptyExtensionParamsParser, (ctx) => traceAcpRequest("authentication/status", ctx.requestId, () => getAgent().extMethod("authentication/status", ctx.params)))
+        .onRequest("authentication/logout", emptyExtensionParamsParser, (ctx) => traceAcpRequest("authentication/logout", ctx.requestId, () => getAgent().extMethod("authentication/logout", ctx.params)))
+        .onRequest(LEGACY_SET_SESSION_MODEL_METHOD, legacySetSessionModelParamsParser, (ctx) => traceAcpRequest(LEGACY_SET_SESSION_MODEL_METHOD, ctx.requestId, () => getAgent().extMethod(LEGACY_SET_SESSION_MODEL_METHOD, ctx.params)))
         .connect(acpJsonStream);
 }

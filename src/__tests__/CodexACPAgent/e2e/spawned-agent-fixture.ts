@@ -58,7 +58,7 @@ export async function createSpawnedAgentFixture(
     }, configuredMcpServers);
 
     const resolvedClient = client ?? new RecordingClient();
-    const agentProcess = spawn("npm", ["run", "--silent", "start"], {
+    const agentProcess = spawn(process.execPath, ["--import", "tsx", "src/index.ts"], {
         cwd: process.cwd(),
         env: {
             ...process.env,

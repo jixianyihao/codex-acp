@@ -64,6 +64,7 @@ import type {
     PermissionsRequestApprovalResponse,
     ItemCompletedNotification,
 } from "./app-server/v2";
+import {createChildTrace, runWithTrace} from "./TraceContext";
 
 export interface ApprovalHandler {
     handleCommandExecution(params: CommandExecutionRequestApprovalParams): Promise<CommandExecutionRequestApprovalResponse>;
@@ -895,20 +896,24 @@ export class CodexAppServerClient {
     }
 
     private async sendRequest<R>(request: CodexRequest): Promise<R> {
-        for (const callback of this.codexEventHandlers) {
-            callback({ eventType: "request", ...request});
-        }
-        let result: any;
-        if (request.params) {
-            result = await this.connection.sendRequest<R>(request.method, request.params)
-        }
-        else {
-            result = await this.connection.sendRequest<R>(request.method);
-        }
-        for (const callback of this.codexEventHandlers) {
-            callback({ eventType: "response", ...result});
-        }
-        return result;
+        const childTrace = createChildTrace(request.method);
+        const execute = async (): Promise<R> => {
+            for (const callback of this.codexEventHandlers) {
+                callback({ eventType: "request", ...request});
+            }
+            let result: any;
+            if (request.params) {
+                result = await this.connection.sendRequest<R>(request.method, request.params)
+            }
+            else {
+                result = await this.connection.sendRequest<R>(request.method);
+            }
+            for (const callback of this.codexEventHandlers) {
+                callback({ eventType: "response", ...result});
+            }
+            return result;
+        };
+        return childTrace ? runWithTrace(childTrace, execute) : execute();
     }
 }
 

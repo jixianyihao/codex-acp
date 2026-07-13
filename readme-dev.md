@@ -11,7 +11,7 @@ Set `CODEX_PATH` to run a different Codex binary; versions other than the one sp
 - `DEFAULT_AUTH_REQUEST` - ACP auth request JSON used when Codex requires authentication.
 - `INITIAL_AGENT_MODE` - initial mode id: `read-only`, `agent`, or `agent-full-access`.
 - `NO_BROWSER` - hide browser-based ChatGPT auth when set.
-- `APP_SERVER_LOGS` - directory for adapter logs.
+- `APP_SERVER_LOGS` - directory for adapter logs, including full ACP and app-server payloads and `traceId`/`spanId` correlation fields. Response lines include `status` and `elapsedMs`; no separate timing lines are emitted. These logs may contain prompts, configuration, or secrets. Filter one request chain with `rg -F '"traceId":"<id>"' app-server.log`.
 
 ### Quick start
 

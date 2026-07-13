@@ -1,11 +1,10 @@
 import fs from "node:fs";
 import path from "node:path";
+import {currentTraceContext} from "./TraceContext";
 
-interface LogContext {
-    [key: string]: unknown;
-}
+type LogContext = object;
 
-class Logger {
+export class Logger {
     private readonly logFilePath: string | null;
 
     constructor() {
@@ -32,7 +31,9 @@ class Logger {
         if (!this.logFilePath) return;
         try {
             const timestamp = this.formatTimestamp(new Date());
-            const serializedContext = context ? ` ${JSON.stringify(context)}` : "";
+            const traceContext = currentTraceContext();
+            const mergedContext = traceContext || context ? {...traceContext, ...context} : undefined;
+            const serializedContext = mergedContext ? ` ${JSON.stringify(mergedContext)}` : "";
 
             if (!message.startsWith('[')) message = `[SYS] ${message}`;
             const line = `${timestamp} ${message}${serializedContext}`;

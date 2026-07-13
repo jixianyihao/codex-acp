@@ -4,8 +4,9 @@ import type {ChildProcessWithoutNullStreams} from "node:child_process";
 import {spawn} from "node:child_process";
 import {createRequire} from "node:module";
 
-import {createJSONRPCReader, createJSONRPCWriter} from "./StdUtils";
+import {createJSONRPCReader, createJSONRPCWriter, createProtocolMessageLogger} from "./StdUtils";
 import {logger} from "./Logger";
+import {TraceRegistry, traceRegistry} from "./TraceContext";
 
 export interface CodexConnection {
     readonly connection: MessageConnection
@@ -25,9 +26,9 @@ export function startCodexConnection(codexPath?: string, env?: NodeJS.ProcessEnv
         codex = spawn(process.execPath, [bundledCodexPath, 'app-server'], {env: spawnEnv});
     }
 
-    attachLogs(codex);
+    attachLogs(codex, traceRegistry);
 
-    const reader = createJSONRPCReader(codex.stdout);
+    const reader = createJSONRPCReader(codex.stdout, message => traceRegistry.consumeAppServerIncoming(message));
     const writer = createJSONRPCWriter(codex.stdin);
 
     let connection = rpc.createMessageConnection(reader, writer);
@@ -42,20 +43,28 @@ export function startCodexConnection(codexPath?: string, env?: NodeJS.ProcessEnv
     return {connection: connection, process: codex};
 }
 
-function attachLogs(proc: ChildProcessWithoutNullStreams) {
+export function attachLogs(proc: ChildProcessWithoutNullStreams, registry: TraceRegistry = traceRegistry) {
+    const connectionContext = {connectionId: registry.connectionId};
+    const stdinLogger = createProtocolMessageLogger("ACP->APP_SERVER", undefined, message => registry.resolveAppServerOutgoing(message) ?? connectionContext);
+    const stdoutLogger = createProtocolMessageLogger("APP_SERVER->ACP", undefined, message => registry.peekAppServerIncoming(message) ?? connectionContext);
+    const stderrLogger = createProtocolMessageLogger("APP_SERVER ERR", message => logger.log(message, connectionContext));
     const originalWrite = proc.stdin.write.bind(proc.stdin);
     proc.stdin.write = (chunk: any, encoding?: any, callback?: any): boolean => {
-        logger.log(`[IN] ${chunk.toString()}`);
+        stdinLogger.write(chunk, typeof encoding === "string" ? encoding as BufferEncoding : undefined);
         return originalWrite(chunk, encoding, callback);
     };
+    proc.stdin.on("finish", () => stdinLogger.end());
 
     proc.stderr.on("data", (data) => {
-        logger.log(`[ERR] ${data.toString()}`);
+        stderrLogger.write(data);
     });
+    proc.stderr.on("end", () => stderrLogger.end());
     proc.stdout.on("data", (data: Buffer) => {
-        logger.log(`[OUT] ${data.toString()}`);
+        stdoutLogger.write(data);
     });
+    proc.stdout.on("end", () => stdoutLogger.end());
     proc.on("exit", (code) => {
-        logger.log(`[EXIT] code: ${code?.toString()}`);
+        logger.log(`[APP_SERVER EXIT] code: ${code?.toString()}`, connectionContext);
+        registry.clear();
     });
 }
